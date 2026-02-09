@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MeetingSense AI</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎯</text></svg>">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['DM Sans', 'sans-serif'],
+              mono: ['JetBrains Mono', 'monospace'],
+            },
+            colors: {
+              brand: {
+                50: '#f0f4ff',
+                100: '#dbe4ff',
+                200: '#bac8ff',
+                300: '#91a7ff',
+                400: '#748ffc',
+                500: '#5c7cfa',
+                600: '#4c6ef5',
+                700: '#4263eb',
+                800: '#3b5bdb',
+                900: '#364fc7',
+              },
+              surface: {
+                50: '#f8fafc',
+                100: '#f1f5f9',
+                200: '#e2e8f0',
+                300: '#cbd5e1',
+              }
+            },
+            animation: {
+              'fade-in': 'fadeIn 0.3s ease-out',
+              'slide-up': 'slideUp 0.4s ease-out',
+              'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+              'spin-slow': 'spin 4s linear infinite',
+            },
+            keyframes: {
+              fadeIn: {
+                '0%': { opacity: '0' },
+                '100%': { opacity: '1' },
+              },
+              slideUp: {
+                '0%': { transform: 'translateY(10px)', opacity: '0' },
+                '100%': { transform: 'translateY(0)', opacity: '1' },
+              }
+            }
+          },
+        },
+      }
+    </script>
+    <style>
+      html { scroll-behavior: smooth; }
+      ::-webkit-scrollbar { width: 6px; height: 6px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+      ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+      
+      .markdown-body { color: #374151; line-height: 1.75; }
+      .markdown-body h1 { font-size: 1.75rem; font-weight: 700; margin-top: 1.5em; margin-bottom: 0.5em; color: #111827; }
+      .markdown-body h2 { font-size: 1.35rem; font-weight: 600; margin-top: 1.5em; margin-bottom: 0.5em; color: #1f2937; border-bottom: 1px solid #e5e7eb; padding-bottom: 0.3em; }
+      .markdown-body h3 { font-size: 1.15rem; font-weight: 600; margin-top: 1.25em; margin-bottom: 0.4em; color: #374151; }
+      .markdown-body p { margin-bottom: 1em; }
+      .markdown-body ul { list-style-type: disc; padding-left: 1.6em; margin-bottom: 1em; color: #4b5563; }
+      .markdown-body ol { list-style-type: decimal; padding-left: 1.6em; margin-bottom: 1em; color: #4b5563; }
+      .markdown-body li { margin-bottom: 0.3em; }
+      .markdown-body table { width: 100%; border-collapse: separate; border-spacing: 0; margin-bottom: 1.5em; font-size: 0.9rem; border-radius: 8px; overflow: hidden; border: 1px solid #e5e7eb; }
+      .markdown-body th { background-color: #f8fafc; font-weight: 600; color: #374151; padding: 0.65em 0.85em; text-align: left; border-bottom: 1px solid #e5e7eb; }
+      .markdown-body td { padding: 0.65em 0.85em; border-bottom: 1px solid #f1f5f9; color: #4b5563; }
+      .markdown-body tr:last-child td { border-bottom: none; }
+      .markdown-body blockquote { border-left: 3px solid #e5e7eb; padding-left: 1em; color: #6b7280; font-style: italic; }
+      .markdown-body code { background-color: #f3f4f6; color: #ef4444; padding: 0.15em 0.35em; border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-size: 0.85em; }
+      .markdown-body pre { background-color: #1e293b; color: #f8fafc; padding: 1em; border-radius: 8px; overflow-x: auto; margin-bottom: 1.25em; }
+      .markdown-body pre code { background-color: transparent; padding: 0; color: inherit; font-size: 0.88em; }
+    </style>
+  </head>
+  <body class="bg-surface-50 text-slate-900 antialiased h-screen flex flex-col overflow-hidden">
+    <div id="root" class="flex-1 flex flex-col h-full overflow-hidden"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
