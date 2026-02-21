@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import { queryAll, queryOne, execute, saveDb } from '../db/database.js';
+import { getActiveApiKey, getActiveModel } from './settings.js';
+import { analyzeRecording } from '../services/geminiAnalyzer.js';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
@@ -23,12 +25,13 @@ const upload = multer({
   limits: { fileSize: (parseInt(process.env.MAX_FILE_SIZE_MB) || 500) * 1024 * 1024 }
 });
 
-// Stats - MUST be before /:id
+// ── GET /api/meetings/stats/overview ────────────────────────────────────────
+// MUST be before /:id to avoid route shadowing
 router.get('/stats/overview', (req, res) => {
   try {
-    const total = queryOne('SELECT COUNT(*) as count FROM meetings')?.count || 0;
-    const completed = queryOne("SELECT COUNT(*) as count FROM meetings WHERE status = 'completed'")?.count || 0;
-    const processing = queryOne("SELECT COUNT(*) as count FROM meetings WHERE status = 'processing'")?.count || 0;
+    const total        = queryOne('SELECT COUNT(*) as count FROM meetings')?.count || 0;
+    const completed    = queryOne("SELECT COUNT(*) as count FROM meetings WHERE status = 'completed'")?.count || 0;
+    const processing   = queryOne("SELECT COUNT(*) as count FROM meetings WHERE status = 'processing'")?.count || 0;
     const totalDuration = queryOne('SELECT COALESCE(SUM(duration_minutes), 0) as total FROM meetings WHERE duration_minutes IS NOT NULL')?.total || 0;
     const recentMeetings = queryAll('SELECT id, title, created_at, status FROM meetings ORDER BY created_at DESC LIMIT 5');
     res.json({ total, completed, processing, totalDuration, recentMeetings });
@@ -38,21 +41,21 @@ router.get('/stats/overview', (req, res) => {
   }
 });
 
-// List meetings
+// ── GET /api/meetings ────────────────────────────────────────────────────────
 router.get('/', (req, res) => {
   try {
-    const page = Math.max(1, parseInt(req.query.page) || 1);
-    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+    const page   = Math.max(1, parseInt(req.query.page) || 1);
+    const limit  = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
     const offset = (page - 1) * limit;
     const search = req.query.search || '';
     const status = req.query.status || '';
 
-    let where = '1=1';
+    let where  = '1=1';
     const params = [];
     if (search) { where += ' AND (m.title LIKE ? OR mr.executive_summary LIKE ?)'; params.push('%' + search + '%', '%' + search + '%'); }
     if (status) { where += ' AND m.status = ?'; params.push(status); }
 
-    const row = queryOne('SELECT COUNT(*) as total FROM meetings m LEFT JOIN meeting_results mr ON m.id = mr.meeting_id WHERE ' + where, params);
+    const row   = queryOne('SELECT COUNT(*) as total FROM meetings m LEFT JOIN meeting_results mr ON m.id = mr.meeting_id WHERE ' + where, params);
     const total = row?.total || 0;
 
     const meetings = queryAll(
@@ -67,13 +70,13 @@ router.get('/', (req, res) => {
   }
 });
 
-// Get single meeting
+// ── GET /api/meetings/:id ────────────────────────────────────────────────────
 router.get('/:id', (req, res) => {
   try {
     const meeting = queryOne('SELECT * FROM meetings WHERE id = ?', [req.params.id]);
     if (!meeting) return res.status(404).json({ error: 'Meeting not found' });
-    const inputs = queryAll('SELECT * FROM meeting_inputs WHERE meeting_id = ?', [req.params.id]);
-    const result = queryOne('SELECT * FROM meeting_results WHERE meeting_id = ?', [req.params.id]);
+    const inputs      = queryAll('SELECT * FROM meeting_inputs WHERE meeting_id = ?', [req.params.id]);
+    const result      = queryOne('SELECT * FROM meeting_results WHERE meeting_id = ?', [req.params.id]);
     const participants = queryAll('SELECT * FROM meeting_participants WHERE meeting_id = ?', [req.params.id]);
     res.json({ ...meeting, inputs, result: result || null, participants });
   } catch (err) {
@@ -82,15 +85,15 @@ router.get('/:id', (req, res) => {
   }
 });
 
-// Create meeting
+// ── POST /api/meetings ───────────────────────────────────────────────────────
 router.post('/', upload.fields([
-  { name: 'file', maxCount: 1 },
+  { name: 'file',           maxCount: 1   },
   { name: 'participantImgs', maxCount: 200 }
 ]), (req, res) => {
   try {
-    const id = uuidv4();
+    const id    = uuidv4();
     const title = req.body.title || 'Untitled Meeting';
-    const text = req.body.text || '';
+    const text  = req.body.text  || '';
 
     execute("INSERT INTO meetings (id, title, status) VALUES (?, ?, 'pending')", [id, title]);
 
@@ -98,15 +101,21 @@ router.post('/', upload.fields([
       execute("INSERT INTO meeting_inputs (meeting_id, input_type, text_content) VALUES (?, 'text', ?)", [id, text]);
     }
 
-    if (req.files && req.files.file && req.files.file[0]) {
+    if (req.files?.file?.[0]) {
       const f = req.files.file[0];
       const inputType = f.mimetype.startsWith('audio/') ? 'audio' : 'video';
-      execute("INSERT INTO meeting_inputs (meeting_id, input_type, file_path, file_name, file_size, mime_type) VALUES (?, ?, ?, ?, ?, ?)", [id, inputType, f.path, f.originalname, f.size, f.mimetype]);
+      execute(
+        "INSERT INTO meeting_inputs (meeting_id, input_type, file_path, file_name, file_size, mime_type) VALUES (?, ?, ?, ?, ?, ?)",
+        [id, inputType, f.path, f.originalname, f.size, f.mimetype]
+      );
     }
 
-    if (req.files && req.files.participantImgs) {
+    if (req.files?.participantImgs) {
       for (const img of req.files.participantImgs) {
-        execute("INSERT INTO meeting_inputs (meeting_id, input_type, file_path, file_name, file_size, mime_type) VALUES (?, 'image', ?, ?, ?, ?)", [id, img.path, img.originalname, img.size, img.mimetype]);
+        execute(
+          "INSERT INTO meeting_inputs (meeting_id, input_type, file_path, file_name, file_size, mime_type) VALUES (?, 'image', ?, ?, ?, ?)",
+          [id, img.path, img.originalname, img.size, img.mimetype]
+        );
       }
     }
 
@@ -118,16 +127,138 @@ router.post('/', upload.fields([
   }
 });
 
-// Save analysis result
+// ── POST /api/meetings/:id/analyze ───────────────────────────────────────────
+// Triggers server-side Gemini analysis.
+// Streams progress as Server-Sent Events so the browser gets real-time updates
+// even for 60–90 minute recordings that take several minutes to analyze.
+router.post('/:id/analyze', async (req, res) => {
+  const meetingId = req.params.id;
+
+  // Validate before opening SSE stream (can still return JSON errors here)
+  const meeting = queryOne('SELECT * FROM meetings WHERE id = ?', [meetingId]);
+  if (!meeting) return res.status(404).json({ error: 'Meeting not found' });
+
+  const apiKey = getActiveApiKey();
+  if (!apiKey) return res.status(400).json({ error: 'Gemini API key not configured. Please add it in Settings.' });
+
+  // Model: request body > DB setting > default
+  const model = (req.body?.model || getActiveModel()).trim();
+
+  // ── Open SSE stream ────────────────────────────────────────────────────────
+  res.setHeader('Content-Type',  'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection',    'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // disable nginx buffering
+  res.flushHeaders();
+
+  const send = (data) => {
+    if (!res.writableEnded) {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    }
+  };
+
+  // Keepalive comment line every 25 s to prevent proxy / browser timeouts
+  const keepalive = setInterval(() => {
+    if (!res.writableEnded) res.write(': keepalive\n\n');
+  }, 25_000);
+
+  const cleanup = () => clearInterval(keepalive);
+
+  try {
+    // Update meeting status to processing
+    execute(
+      "UPDATE meetings SET status = 'processing', error_message = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+      [meetingId]
+    );
+    saveDb();
+
+    // Gather stored inputs
+    const inputs = queryAll('SELECT * FROM meeting_inputs WHERE meeting_id = ?', [meetingId]);
+
+    const audioInput = inputs.find(i => i.input_type === 'audio' || i.input_type === 'video');
+    const imageInputs = inputs.filter(i => i.input_type === 'image');
+    const textInput   = inputs.find(i => i.input_type === 'text');
+
+    const audioFilePath = audioInput?.file_path  || null;
+    const audioMimeType = audioInput?.mime_type   || 'audio/webm';
+    const imagePaths    = imageInputs.map(i => i.file_path).filter(Boolean);
+    const metadataText  = textInput?.text_content || '';
+
+    send({ stage: 'Starting', detail: `Model: ${model}`, percent: 5 });
+
+    // Run analysis — emitting progress events throughout
+    const rawMarkdown = await analyzeRecording({
+      audioFilePath,
+      audioMimeType,
+      metadataText,
+      imagePaths,
+      model,
+      apiKey,
+      emit: (stage, detail) => {
+        send({ stage, detail });
+        console.log(`[Analysis:${meetingId}] ${stage}${detail ? ' — ' + detail : ''}`);
+      },
+    });
+
+    // Extract metadata from result
+    const execMatch = rawMarkdown.match(/# 1\. Executive Summary[\s\S]*?\n([\s\S]*?)(?=\n# 2)/);
+    const execSummary = execMatch ? execMatch[1].trim() : '';
+
+    const metaMatch = rawMarkdown.match(/```json\s*([\s\S]*?)```/);
+    const metaJson  = metaMatch ? metaMatch[1].trim() : '{}';
+
+    // Derive title and duration
+    let title    = meeting.title || 'Untitled Meeting';
+    let duration = null;
+    try {
+      const meta = JSON.parse(metaJson);
+      if (meta.title && meta.title !== 'Untitled Meeting') title = meta.title;
+      if (meta.duration_minutes) duration = parseInt(meta.duration_minutes) || null;
+    } catch (e) {}
+
+    // Persist result
+    execute("DELETE FROM meeting_results WHERE meeting_id = ?", [meetingId]);
+    execute(
+      "INSERT INTO meeting_results (meeting_id, raw_markdown, executive_summary, metadata_json) VALUES (?, ?, ?, ?)",
+      [meetingId, rawMarkdown, execSummary, metaJson]
+    );
+    execute(
+      "UPDATE meetings SET status = 'completed', title = ?, duration_minutes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+      [title, duration, meetingId]
+    );
+    saveDb();
+
+    send({ stage: 'Done', detail: `${rawMarkdown.length} chars`, percent: 100, done: true, result: rawMarkdown });
+  } catch (err) {
+    console.error(`[Analysis:${meetingId}] Error:`, err.message);
+    try {
+      execute(
+        "UPDATE meetings SET status = 'error', error_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        [err.message, meetingId]
+      );
+      saveDb();
+    } catch (dbErr) {
+      console.error('Failed to save error state:', dbErr.message);
+    }
+    send({ stage: 'Error', error: err.message, done: true });
+  } finally {
+    cleanup();
+    if (!res.writableEnded) res.end();
+  }
+});
+
+// ── PUT /api/meetings/:id/result ─────────────────────────────────────────────
 router.put('/:id/result', (req, res) => {
   try {
     const { raw_markdown, executive_summary, metadata_json } = req.body;
 
-    // Delete existing result first, then insert
     execute("DELETE FROM meeting_results WHERE meeting_id = ?", [req.params.id]);
-    execute("INSERT INTO meeting_results (meeting_id, raw_markdown, executive_summary, metadata_json) VALUES (?, ?, ?, ?)", [req.params.id, raw_markdown, executive_summary || '', metadata_json || '{}']);
+    execute(
+      "INSERT INTO meeting_results (meeting_id, raw_markdown, executive_summary, metadata_json) VALUES (?, ?, ?, ?)",
+      [req.params.id, raw_markdown, executive_summary || '', metadata_json || '{}']
+    );
 
-    let title = 'Untitled Meeting';
+    let title    = 'Untitled Meeting';
     let duration = null;
     if (metadata_json) {
       try {
@@ -137,7 +268,10 @@ router.put('/:id/result', (req, res) => {
       } catch (e) {}
     }
 
-    execute("UPDATE meetings SET status = 'completed', title = ?, duration_minutes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [title, duration, req.params.id]);
+    execute(
+      "UPDATE meetings SET status = 'completed', title = ?, duration_minutes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+      [title, duration, req.params.id]
+    );
     saveDb();
     res.json({ success: true });
   } catch (err) {
@@ -146,11 +280,14 @@ router.put('/:id/result', (req, res) => {
   }
 });
 
-// Update status
+// ── PUT /api/meetings/:id/status ─────────────────────────────────────────────
 router.put('/:id/status', (req, res) => {
   try {
     const { status, error_message } = req.body;
-    execute("UPDATE meetings SET status = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [status, error_message || null, req.params.id]);
+    execute(
+      "UPDATE meetings SET status = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+      [status, error_message || null, req.params.id]
+    );
     saveDb();
     res.json({ success: true });
   } catch (err) {
@@ -159,17 +296,22 @@ router.put('/:id/status', (req, res) => {
   }
 });
 
-// Delete meeting
+// ── DELETE /api/meetings/:id ─────────────────────────────────────────────────
 router.delete('/:id', (req, res) => {
   try {
-    const inputs = queryAll('SELECT file_path FROM meeting_inputs WHERE meeting_id = ? AND file_path IS NOT NULL', [req.params.id]);
+    const inputs = queryAll(
+      'SELECT file_path FROM meeting_inputs WHERE meeting_id = ? AND file_path IS NOT NULL',
+      [req.params.id]
+    );
     for (const input of inputs) {
-      if (input.file_path && fs.existsSync(input.file_path)) fs.unlinkSync(input.file_path);
+      if (input.file_path && fs.existsSync(input.file_path)) {
+        try { fs.unlinkSync(input.file_path); } catch (e) {}
+      }
     }
     execute('DELETE FROM meeting_participants WHERE meeting_id = ?', [req.params.id]);
-    execute('DELETE FROM meeting_inputs WHERE meeting_id = ?', [req.params.id]);
-    execute('DELETE FROM meeting_results WHERE meeting_id = ?', [req.params.id]);
-    execute('DELETE FROM meetings WHERE id = ?', [req.params.id]);
+    execute('DELETE FROM meeting_inputs       WHERE meeting_id = ?', [req.params.id]);
+    execute('DELETE FROM meeting_results      WHERE meeting_id = ?', [req.params.id]);
+    execute('DELETE FROM meetings             WHERE id = ?',         [req.params.id]);
     saveDb();
     res.json({ success: true });
   } catch (err) {
@@ -178,14 +320,15 @@ router.delete('/:id', (req, res) => {
   }
 });
 
-// Export as markdown
+// ── GET /api/meetings/:id/export ─────────────────────────────────────────────
 router.get('/:id/export', (req, res) => {
   try {
-    const result = queryOne('SELECT * FROM meeting_results WHERE meeting_id = ?', [req.params.id]);
+    const result  = queryOne('SELECT * FROM meeting_results WHERE meeting_id = ?', [req.params.id]);
     if (!result) return res.status(404).json({ error: 'No result found' });
     const meeting = queryOne('SELECT * FROM meetings WHERE id = ?', [req.params.id]);
+    const fname   = (meeting?.title || 'meeting').replace(/[^a-z0-9]/gi, '_');
     res.setHeader('Content-Type', 'text/markdown');
-    res.setHeader('Content-Disposition', 'attachment; filename="' + (meeting?.title || 'meeting').replace(/[^a-z0-9]/gi, '_') + '.md"');
+    res.setHeader('Content-Disposition', `attachment; filename="${fname}.md"`);
     res.send(result.raw_markdown);
   } catch (err) {
     console.error('Export error:', err);
@@ -193,18 +336,18 @@ router.get('/:id/export', (req, res) => {
   }
 });
 
-// Multer error handler — catch file limit errors with clear messages
+// ── Multer error handler ─────────────────────────────────────────────────────
 router.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {
     console.error('Multer error:', err.code, err.message, err.field);
     const messages = {
-      LIMIT_FILE_SIZE: `File too large. Maximum size is ${parseInt(process.env.MAX_FILE_SIZE_MB) || 500}MB.`,
+      LIMIT_FILE_SIZE:       `File too large. Maximum size is ${parseInt(process.env.MAX_FILE_SIZE_MB) || 500} MB.`,
       LIMIT_UNEXPECTED_FILE: `Too many files uploaded for field "${err.field}".`,
-      LIMIT_FILE_COUNT: 'Too many files uploaded.',
-      LIMIT_FIELD_KEY: 'Field name too long.',
-      LIMIT_FIELD_VALUE: 'Field value too long.',
-      LIMIT_FIELD_COUNT: 'Too many fields.',
-      LIMIT_PART_COUNT: 'Too many parts.',
+      LIMIT_FILE_COUNT:      'Too many files uploaded.',
+      LIMIT_FIELD_KEY:       'Field name too long.',
+      LIMIT_FIELD_VALUE:     'Field value too long.',
+      LIMIT_FIELD_COUNT:     'Too many fields.',
+      LIMIT_PART_COUNT:      'Too many parts.',
     };
     return res.status(413).json({ error: messages[err.code] || err.message });
   }

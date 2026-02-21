@@ -7,41 +7,65 @@ import { ResultView } from './components/ResultView';
 import { ProcessingState } from './components/ProcessingState';
 import { MeetingHistory } from './components/MeetingHistory';
 import { MeetingDetailView } from './components/MeetingDetailView';
-import { analyzeMeeting, setApiKeyCache } from './services/geminiService';
-import { createMeeting, saveMeetingResult, updateMeetingStatus, checkApiKeyStatus } from './services/api';
+import { setSelectedModel } from './services/geminiService';
+import { createMeeting, analyzeWithServer, checkApiKeyStatus, getModelPreference } from './services/api';
 import { AnalysisState } from './types';
 
 type View = 'dashboard' | 'new' | 'history' | 'detail' | 'settings';
 
-function App() {
-  const [apiKeyReady, setApiKeyReady] = useState<boolean | null>(null); // null = loading
-  const [currentView, setCurrentView] = useState<View>('dashboard');
-  const [analysisState, setAnalysisState] = useState<AnalysisState>({ status: 'idle' });
-  const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+// Maximum number of screenshots + participant images to store on the server.
+// The server-side analyzer caps at 40 for Gemini, so uploading 40 ensures
+// the best speaker-identification quality without wasting bandwidth.
+const MAX_IMGS_FOR_SERVER = 40;
 
+/** Evenly sample `count` items from an array (mirrors server-side logic) */
+function sampleEvenly<T>(arr: T[], count: number): T[] {
+  if (arr.length <= count) return arr;
+  const step = arr.length / count;
+  const result: T[] = [];
+  for (let i = 0; i < count; i++) {
+    result.push(arr[Math.floor(i * step)]);
+  }
+  return result;
+}
+
+function App() {
+  const [apiKeyReady,     setApiKeyReady]     = useState<boolean | null>(null); // null = loading
+  const [currentView,     setCurrentView]     = useState<View>('dashboard');
+  const [analysisState,   setAnalysisState]   = useState<AnalysisState>({ status: 'idle' });
+  const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
+  const [sidebarOpen,     setSidebarOpen]     = useState(true);
+  const [processingStage, setProcessingStage] = useState('');
+
+  // On mount: check API key and restore saved model preference
   useEffect(() => {
     checkApiKeyStatus()
-      .then(({ configured }) => setApiKeyReady(configured))
+      .then(({ configured, model }) => {
+        if (configured && model) setSelectedModel(model);
+        setApiKeyReady(configured);
+      })
       .catch(() => setApiKeyReady(false));
   }, []);
 
-  const handleApiKeyConfigured = (key: string) => {
-    setApiKeyCache(key);
+  const handleApiKeyConfigured = (_key: string, model: string) => {
+    setSelectedModel(model);
     setApiKeyReady(true);
   };
 
-  const [processingStage, setProcessingStage] = useState('');
-
+  /**
+   * Main analysis flow:
+   *  1. Upload audio + up-to-40 screenshots to the server (createMeeting)
+   *  2. Ask server to run Gemini analysis via SSE-streamed endpoint
+   *  3. The server handles File API upload, retry, fallback — not the browser
+   *  4. Display the streamed result
+   */
   const handleAnalyze = async (text: string, file: File | null, participantImgs: File[] = []) => {
     setAnalysisState({ status: 'processing' });
-    setProcessingStage('Creating meeting record...');
+    setProcessingStage('Uploading recording...');
 
-    // Separate: manual participant photos (few, permanent) vs recording screenshots (many, transient)
-    // Only upload the audio file + text to the server for DB record
-    // Screenshots go directly to Gemini client-side (never to our server)
-    const MAX_IMGS_FOR_SERVER = 20; // Only store up to 20 images in DB
-    const serverImgs = participantImgs.slice(0, MAX_IMGS_FOR_SERVER);
+    // Evenly sample screenshots so we keep the most representative frames.
+    // Participant photos (typically < 5) are always included by slicing at the end.
+    const serverImgs = sampleEvenly(participantImgs, MAX_IMGS_FOR_SERVER);
 
     const formData = new FormData();
     if (text) formData.append('text', text);
@@ -51,43 +75,36 @@ function App() {
     let meetingId: string | null = null;
 
     try {
+      // 1. Store recording + metadata on server
       const { id } = await createMeeting(formData);
       meetingId = id;
-      await updateMeetingStatus(id, 'processing');
       setAnalysisState({ status: 'processing', meetingId: id });
 
-      // Run Gemini analysis with ALL images (including screenshots beyond server limit)
-      const result = await analyzeMeeting(text, file, participantImgs, (stage, detail) => {
-        setProcessingStage(detail ? `${stage}: ${detail}` : stage);
-      });
+      // 2. Trigger server-side Gemini analysis (streams SSE progress)
+      setProcessingStage('Starting Gemini analysis...');
+      const result = await analyzeWithServer(
+        id,
+        null, // model — server uses DB-saved preference
+        (stage, detail) => {
+          setProcessingStage(detail ? `${stage}: ${detail}` : stage);
+        },
+      );
 
-      // Extract executive summary and metadata
-      const execMatch = result.match(/# 1\. Executive Summary[\s\S]*?\n([\s\S]*?)(?=\n# 2)/);
-      const execSummary = execMatch ? execMatch[1].trim() : '';
-
-      const metaMatch = result.match(/```json\s*([\s\S]*?)```/);
-      const metaJson = metaMatch ? metaMatch[1].trim() : '{}';
-
-      // Save result to DB
-      await saveMeetingResult(id, {
-        raw_markdown: result,
-        executive_summary: execSummary,
-        metadata_json: metaJson,
-      });
-
+      // 3. Result is already persisted by the server — just show it
       setAnalysisState({ status: 'success', result, meetingId: id });
     } catch (error: any) {
       const errMsg = error.message || 'Something went wrong during processing.';
-      if (meetingId) {
-        await updateMeetingStatus(meetingId, 'error', errMsg).catch(() => {});
-      }
-      
-      if (error.message === 'API_KEY_NOT_CONFIGURED') {
-        setApiKeyReady(false);
+
+      if (error.name === 'AbortError') {
+        setAnalysisState({
+          status: 'error',
+          error: 'Analysis timed out after 10 minutes. The recording may be too large or Gemini is temporarily unavailable. Please try again.',
+          meetingId: meetingId ?? undefined,
+        });
         return;
       }
-      
-      setAnalysisState({ status: 'error', error: errMsg, meetingId });
+
+      setAnalysisState({ status: 'error', error: errMsg, meetingId: meetingId ?? undefined });
     }
   };
 
@@ -101,7 +118,7 @@ function App() {
     setCurrentView('detail');
   };
 
-  // Loading state
+  // ── Loading spinner ────────────────────────────────────────────────────────
   if (apiKeyReady === null) {
     return (
       <div className="h-screen flex items-center justify-center bg-surface-50">
@@ -113,22 +130,22 @@ function App() {
     );
   }
 
-  // API Key setup
+  // ── First-run API key + model setup ───────────────────────────────────────
   if (!apiKeyReady) {
     return <ApiKeySetup onConfigured={handleApiKeyConfigured} />;
   }
 
   return (
-    <Layout 
-      currentView={currentView} 
+    <Layout
+      currentView={currentView}
       onNavigate={(v) => { setCurrentView(v as View); setAnalysisState({ status: 'idle' }); }}
       sidebarOpen={sidebarOpen}
       onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
       onOpenSettings={() => { setApiKeyReady(false); }}
     >
       {currentView === 'dashboard' && (
-        <Dashboard 
-          onNewMeeting={() => setCurrentView('new')} 
+        <Dashboard
+          onNewMeeting={() => setCurrentView('new')}
           onViewMeeting={handleViewMeeting}
         />
       )}
@@ -142,10 +159,10 @@ function App() {
       )}
 
       {currentView === 'new' && analysisState.status === 'success' && analysisState.result && (
-        <ResultView 
-          content={analysisState.result} 
+        <ResultView
+          content={analysisState.result}
           meetingId={analysisState.meetingId}
-          onReset={handleReset} 
+          onReset={handleReset}
         />
       )}
 
@@ -158,15 +175,15 @@ function App() {
               </svg>
             </div>
             <h3 className="text-red-700 font-bold text-xl mb-2">Processing Error</h3>
-            <p className="text-red-600 mb-6">{analysisState.error}</p>
+            <p className="text-red-600 mb-6 text-sm leading-relaxed">{analysisState.error}</p>
             <div className="flex gap-3 justify-center">
-              <button 
+              <button
                 onClick={() => setAnalysisState({ status: 'idle' })}
                 className="px-5 py-2.5 bg-white border border-red-200 text-red-700 font-semibold rounded-xl hover:bg-red-50 transition-colors"
               >
                 Try Again
               </button>
-              <button 
+              <button
                 onClick={handleReset}
                 className="px-5 py-2.5 bg-red-600 text-white font-semibold rounded-xl hover:bg-red-700 transition-colors"
               >
@@ -182,9 +199,9 @@ function App() {
       )}
 
       {currentView === 'detail' && selectedMeetingId && (
-        <MeetingDetailView 
-          meetingId={selectedMeetingId} 
-          onBack={() => setCurrentView('history')} 
+        <MeetingDetailView
+          meetingId={selectedMeetingId}
+          onBack={() => setCurrentView('history')}
         />
       )}
     </Layout>
