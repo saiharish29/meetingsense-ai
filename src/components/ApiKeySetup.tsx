@@ -1,17 +1,20 @@
 import React, { useState } from 'react';
 import { saveApiKey, validateApiKey } from '../services/api';
+import { ModelSelector } from './ModelSelector';
 
 interface ApiKeySetupProps {
-  onConfigured: (key: string) => void;
+  onConfigured: (key: string, model: string) => void;
 }
 
-export function ApiKeySetup({ onConfigured }: ApiKeySetupProps) {
-  const [apiKey, setApiKey] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [step, setStep] = useState<'input' | 'validating' | 'success'>('input');
+type Step = 'input' | 'validating' | 'model' | 'success';
 
-  const handleSubmit = async (e: React.FormEvent) => {
+export function ApiKeySetup({ onConfigured }: ApiKeySetupProps) {
+  const [apiKey,  setApiKey]  = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState('');
+  const [step,    setStep]    = useState<Step>('input');
+
+  const handleKeySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!apiKey.trim()) {
       setError('Please enter your API key');
@@ -23,7 +26,6 @@ export function ApiKeySetup({ onConfigured }: ApiKeySetupProps) {
     setStep('validating');
 
     try {
-      // Validate first
       const validation = await validateApiKey(apiKey.trim());
       if (!validation.valid) {
         setError(validation.error || 'Invalid API key. Please check and try again.');
@@ -32,11 +34,9 @@ export function ApiKeySetup({ onConfigured }: ApiKeySetupProps) {
         return;
       }
 
-      // Save to DB
+      // Key is valid — save it, then move to model selection
       await saveApiKey(apiKey.trim());
-      setStep('success');
-      
-      setTimeout(() => onConfigured(apiKey.trim()), 800);
+      setStep('model');
     } catch (err: any) {
       setError(err.message || 'Failed to save API key');
       setStep('input');
@@ -45,9 +45,34 @@ export function ApiKeySetup({ onConfigured }: ApiKeySetupProps) {
     }
   };
 
+  const handleModelSaved = (model: string) => {
+    setStep('success');
+    setTimeout(() => onConfigured(apiKey.trim(), model), 800);
+  };
+
+  // ── Success ──────────────────────────────────────────────────────────────
+  if (step === 'success') {
+    return (
+      <div className="h-screen bg-surface-50 flex items-center justify-center p-4">
+        <div className="w-full max-w-md">
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 text-center">
+            <div className="w-14 h-14 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
+              <svg className="w-7 h-7 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <h3 className="text-lg font-semibold text-green-700">All Set!</h3>
+            <p className="text-slate-500 text-sm mt-1">Launching MeetingSense AI...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-screen bg-surface-50 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
+
         {/* Logo */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 bg-brand-600 rounded-2xl mb-4 shadow-lg shadow-brand-200">
@@ -56,23 +81,42 @@ export function ApiKeySetup({ onConfigured }: ApiKeySetupProps) {
             </svg>
           </div>
           <h1 className="text-2xl font-bold text-slate-900">MeetingSense AI</h1>
-          <p className="text-slate-500 mt-1">Configure your Gemini API key to get started</p>
+          <p className="text-slate-500 mt-1">
+            {step === 'model'
+              ? 'Choose your Gemini model'
+              : 'Configure your Gemini API key to get started'}
+          </p>
         </div>
 
         {/* Card */}
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-          {step === 'success' ? (
-            <div className="text-center py-6">
-              <div className="w-14 h-14 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                <svg className="w-7 h-7 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-              </div>
-              <h3 className="text-lg font-semibold text-green-700">API Key Configured!</h3>
-              <p className="text-slate-500 text-sm mt-1">Launching MeetingSense AI...</p>
-            </div>
-          ) : (
-            <form onSubmit={handleSubmit}>
+
+          {/* Step indicator */}
+          <div className="flex items-center gap-2 mb-5">
+            {(['input', 'model'] as const).map((s, i) => (
+              <React.Fragment key={s}>
+                <div className={`flex items-center gap-1.5 text-xs font-semibold ${
+                  step === s ? 'text-brand-600' :
+                  (step === 'model' && s === 'input') || step === 'success' ? 'text-green-600' :
+                  'text-slate-400'
+                }`}>
+                  <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${
+                    step === s ? 'bg-brand-600 text-white' :
+                    (step === 'model' && s === 'input') || step === 'success' ? 'bg-green-500 text-white' :
+                    'bg-slate-200 text-slate-500'
+                  }`}>
+                    {((step === 'model' && s === 'input') || step === 'success') ? '✓' : i + 1}
+                  </div>
+                  {s === 'input' ? 'API Key' : 'Model'}
+                </div>
+                {i < 1 && <div className="flex-1 h-px bg-slate-200" />}
+              </React.Fragment>
+            ))}
+          </div>
+
+          {/* ── Step 1: API Key ──────────────────────────────────────────── */}
+          {(step === 'input' || step === 'validating') && (
+            <form onSubmit={handleKeySubmit}>
               <label className="block text-sm font-semibold text-slate-700 mb-2">
                 Google Gemini API Key
               </label>
@@ -85,7 +129,7 @@ export function ApiKeySetup({ onConfigured }: ApiKeySetupProps) {
                 autoFocus
                 disabled={loading}
               />
-              
+
               {error && (
                 <p className="text-red-500 text-sm mt-2 flex items-center gap-1.5">
                   <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -105,9 +149,7 @@ export function ApiKeySetup({ onConfigured }: ApiKeySetupProps) {
                     <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                     Validating...
                   </>
-                ) : (
-                  'Continue →'
-                )}
+                ) : 'Continue →'}
               </button>
 
               <div className="mt-4 p-3 bg-blue-50 rounded-xl border border-blue-100">
@@ -116,10 +158,20 @@ export function ApiKeySetup({ onConfigured }: ApiKeySetupProps) {
                   <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer" className="underline font-medium">
                     Google AI Studio
                   </a>
-                  {' '}→ Click "Create API Key" → Copy and paste it above. Your key is stored locally in the database and never shared.
+                  {' '}→ Click "Create API Key" → Copy and paste it above.{' '}
+                  Your key is stored locally in the database and never shared.
                 </p>
               </div>
             </form>
+          )}
+
+          {/* ── Step 2: Model Selection ──────────────────────────────────── */}
+          {step === 'model' && (
+            <ModelSelector
+              apiKeyOverride={apiKey.trim()}
+              onModelSaved={handleModelSaved}
+              setupMode
+            />
           )}
         </div>
       </div>
