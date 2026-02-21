@@ -175,7 +175,10 @@ function App() {
               </svg>
             </div>
             <h3 className="text-red-700 font-bold text-xl mb-2">Processing Error</h3>
-            <p className="text-red-600 mb-6 text-sm leading-relaxed">{analysisState.error}</p>
+            {/* whitespace-pre-line renders \n line-breaks from server error messages */}
+            <p className="text-red-600 mb-6 text-sm leading-relaxed text-left whitespace-pre-line">
+              {analysisState.error}
+            </p>
             <div className="flex gap-3 justify-center">
               <button
                 onClick={() => setAnalysisState({ status: 'idle' })}
