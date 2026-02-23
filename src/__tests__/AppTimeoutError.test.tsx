@@ -10,6 +10,11 @@
  *     permanently stuck in 'processing'.
  *  3. Gemini server errors (non-AbortError) are shown verbatim.
  *  4. The "Try Again" button returns the UI to the idle/input state.
+ *  5. SSE stream recovery: when the stream ends unexpectedly but the server
+ *     already saved the result (status='completed'), the App shows the result
+ *     instead of an error — and does NOT call updateMeetingStatus('error').
+ *  6. SSE stream interruption while still processing: friendly "check history"
+ *     message is shown without marking the meeting as error.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -171,6 +176,100 @@ describe('App — server error handling', () => {
         expect.any(String),
       );
     });
+  });
+});
+
+describe('App — SSE stream recovery', () => {
+  it('shows the result silently when the SSE stream ends but server already completed', async () => {
+    // Simulate: stream ended without done event, but server saved the result
+    vi.mocked(api.analyzeWithServer).mockRejectedValueOnce(
+      new Error('Analysis stream ended unexpectedly without a result.')
+    );
+    vi.mocked(api.getMeeting).mockResolvedValueOnce({
+      id: 'mtg-abc', title: 'T', created_at: '2025-01-01',
+      status: 'completed', inputs: [], participants: [],
+      result: { raw_markdown: '# Silent Recovery\n\nFull report here.' },
+    } as any);
+
+    render(<App />);
+    await waitForApp();
+    await navigateToNewMeeting();
+    await submitMockRecording();
+
+    // App should show the result, NOT the error dialog
+    await waitFor(() => {
+      expect(screen.queryByText('Processing Error')).not.toBeInTheDocument();
+    });
+  });
+
+  it('does NOT call updateMeetingStatus when server already completed', async () => {
+    vi.mocked(api.analyzeWithServer).mockRejectedValueOnce(
+      new Error('Analysis stream ended unexpectedly without a result.')
+    );
+    vi.mocked(api.getMeeting).mockResolvedValueOnce({
+      id: 'mtg-abc', title: 'T', created_at: '2025-01-01',
+      status: 'completed', inputs: [], participants: [],
+      result: { raw_markdown: '# Report' },
+    } as any);
+
+    render(<App />);
+    await waitForApp();
+    await navigateToNewMeeting();
+    await submitMockRecording();
+
+    // Wait for the async catch block to settle
+    await waitFor(() => {
+      expect(api.getMeeting).toHaveBeenCalled();
+    });
+
+    // updateMeetingStatus must NOT have been called — the server's 'completed'
+    // status should NOT be overwritten with 'error'
+    expect(api.updateMeetingStatus).not.toHaveBeenCalled();
+  });
+
+  it('shows a connection-interrupted message when server is still processing', async () => {
+    vi.mocked(api.analyzeWithServer).mockRejectedValueOnce(
+      new Error('Analysis stream ended unexpectedly without a result.')
+    );
+    vi.mocked(api.getMeeting).mockResolvedValueOnce({
+      id: 'mtg-abc', title: 'T', created_at: '2025-01-01',
+      status: 'processing', inputs: [], participants: [],
+      result: null,
+    } as any);
+
+    render(<App />);
+    await waitForApp();
+    await navigateToNewMeeting();
+    await submitMockRecording();
+
+    await waitFor(() => {
+      expect(screen.getByText('Processing Error')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/connection to the analysis stream was interrupted/i)).toBeInTheDocument();
+  });
+
+  it('does NOT call updateMeetingStatus when server is still processing', async () => {
+    vi.mocked(api.analyzeWithServer).mockRejectedValueOnce(
+      new Error('Analysis stream ended unexpectedly without a result.')
+    );
+    vi.mocked(api.getMeeting).mockResolvedValueOnce({
+      id: 'mtg-abc', title: 'T', created_at: '2025-01-01',
+      status: 'processing', inputs: [], participants: [],
+      result: null,
+    } as any);
+
+    render(<App />);
+    await waitForApp();
+    await navigateToNewMeeting();
+    await submitMockRecording();
+
+    await waitFor(() => {
+      expect(api.getMeeting).toHaveBeenCalled();
+    });
+
+    // updateMeetingStatus must NOT overwrite a still-running analysis
+    expect(api.updateMeetingStatus).not.toHaveBeenCalled();
   });
 });
 

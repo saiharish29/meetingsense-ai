@@ -8,7 +8,7 @@ import { ProcessingState } from './components/ProcessingState';
 import { MeetingHistory } from './components/MeetingHistory';
 import { MeetingDetailView } from './components/MeetingDetailView';
 import { setSelectedModel } from './services/geminiService';
-import { createMeeting, analyzeWithServer, checkApiKeyStatus, getModelPreference, updateMeetingStatus } from './services/api';
+import { createMeeting, analyzeWithServer, checkApiKeyStatus, getModelPreference, updateMeetingStatus, getMeeting } from './services/api';
 import { AnalysisState } from './types';
 
 type View = 'dashboard' | 'new' | 'history' | 'detail' | 'settings';
@@ -97,11 +97,47 @@ function App() {
         ? 'Analysis timed out after 25 minutes. The recording may be too large or Gemini is temporarily unavailable. Please try again.'
         : (error.message || 'Something went wrong during processing.');
 
-      // Best-effort: mark the meeting as errored in the DB so it doesn't stay
-      // stuck in "processing" indefinitely if the server crashed or lost the
-      // connection before it could update the status itself.
+      // ── SSE stream recovery ───────────────────────────────────────────────
+      // The SSE stream can end without delivering the `done` event if the
+      // connection is reset mid-stream (network blip, dev-proxy idle timeout,
+      // brief tab-switch, etc.).  When this happens the server has ALREADY
+      // saved the result — `updateMeetingStatus('error')` would blindly
+      // overwrite a perfectly valid 'completed' DB record.
+      //
+      // Strategy:
+      //  • Check the current DB status BEFORE touching it.
+      //  • 'completed' + result  → show the result (silent recovery, no error)
+      //  • 'processing'          → server is still running; don't mark error
+      //                            (it will complete on its own — user can check
+      //                            Meeting History in a moment)
+      //  • anything else         → mark error as before (keeps stuck meetings unblocked)
       if (meetingId) {
-        updateMeetingStatus(meetingId, 'error', errMsg).catch(() => {});
+        try {
+          const meeting = await getMeeting(meetingId);
+
+          if (meeting.status === 'completed' && meeting.result?.raw_markdown) {
+            // Server completed OK — SSE just lost the final event.  Recover silently.
+            setAnalysisState({ status: 'success', result: meeting.result.raw_markdown, meetingId });
+            return;
+          }
+
+          if (meeting.status === 'processing') {
+            // Server is still working.  Don't stomp on it — it will finish.
+            // Show a friendly "check history" message instead of a hard error.
+            setAnalysisState({
+              status: 'error',
+              error: 'The connection to the analysis stream was interrupted. The analysis is still running on the server — please check Meeting History in a moment to see the completed result.',
+              meetingId,
+            });
+            return;
+          }
+
+          // 'pending' or 'error' — safe to mark as errored to unblock it
+          updateMeetingStatus(meetingId, 'error', errMsg).catch(() => {});
+        } catch (_) {
+          // Can't reach the server — best-effort mark as error
+          updateMeetingStatus(meetingId, 'error', errMsg).catch(() => {});
+        }
       }
 
       setAnalysisState({ status: 'error', error: errMsg, meetingId: meetingId ?? undefined });

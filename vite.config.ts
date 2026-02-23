@@ -12,6 +12,11 @@ export default defineConfig(({ mode }) => {
         '/api': {
           target: `http://localhost:${env.PORT || 3001}`,
           changeOrigin: true,
+          // Disable proxy-level timeouts so long-running SSE streams
+          // (analysis can take up to 20 min for large recordings) are never
+          // cut off by the dev-proxy before the server finishes.
+          timeout: 0,
+          proxyTimeout: 0,
         },
         '/uploads': {
           target: `http://localhost:${env.PORT || 3001}`,

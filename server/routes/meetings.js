@@ -171,12 +171,16 @@ router.post('/:id/analyze', async (req, res) => {
     }
   };
 
-  // Keepalive comment line every 25 s to prevent proxy / browser timeouts.
+  // Keepalive comment line every 10 s to prevent proxy / browser timeouts.
+  // 10 s is conservative: even the most aggressive reverse-proxy idle timeout
+  // (typically 15–30 s) will see data before it fires.  For the dev Vite
+  // proxy this is belt-and-braces since we also set proxyTimeout:0 there,
+  // but it also helps in production behind nginx/caddy/cloudflare.
   // Also wrapped in try/catch for the same reason as send() above.
   const keepalive = setInterval(() => {
     if (res.writableEnded || clientGone) return;
     try { res.write(': keepalive\n\n'); } catch (_) { clientGone = true; }
-  }, 25_000);
+  }, 10_000);
 
   const cleanup = () => clearInterval(keepalive);
 

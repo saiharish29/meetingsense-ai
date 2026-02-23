@@ -3,20 +3,24 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 
 // ---- Mock API module ----
 vi.mock('../services/api', () => ({
-  checkApiKeyStatus: vi.fn().mockResolvedValue({ configured: true, source: 'db' }),
-  saveApiKey: vi.fn().mockResolvedValue({ success: true }),
-  validateApiKey: vi.fn().mockResolvedValue({ valid: true }),
+  checkApiKeyStatus:    vi.fn().mockResolvedValue({ configured: true, source: 'db', model: 'gemini-2.5-flash' }),
+  saveApiKey:           vi.fn().mockResolvedValue({ success: true }),
+  validateApiKey:       vi.fn().mockResolvedValue({ valid: true }),
+  fetchAvailableModels: vi.fn().mockResolvedValue({ models: [], currentModel: 'gemini-2.5-flash' }),
+  saveModelPreference:  vi.fn().mockResolvedValue({ success: true, model: 'gemini-2.5-flash' }),
+  getModelPreference:   vi.fn().mockResolvedValue({ model: 'gemini-2.5-flash' }),
   listMeetings: vi.fn().mockResolvedValue({ meetings: [], pagination: { page: 1, limit: 15, total: 0, totalPages: 1 } }),
   getMeeting: vi.fn().mockResolvedValue({
     id: 'test-1', title: 'Test Meeting', created_at: '2025-01-01', status: 'completed',
     inputs: [], result: { raw_markdown: '# 1. Executive Summary\nTest\n# 2. Detailed Summary\nDetails\n# 3. Cleaned Transcript\n[00:00] Host: Hi\n# 4. Metadata\n```json\n{"title":"Test"}\n```', executive_summary: 'Test', metadata_json: '{}' }, participants: [],
   }),
-  createMeeting: vi.fn().mockResolvedValue({ id: 'new-1', status: 'pending' }),
-  saveMeetingResult: vi.fn().mockResolvedValue({ success: true }),
-  updateMeetingStatus: vi.fn().mockResolvedValue({ success: true }),
-  deleteMeeting: vi.fn().mockResolvedValue({ success: true }),
-  getDashboardStats: vi.fn().mockResolvedValue({ total: 5, completed: 3, processing: 1, totalDuration: 120, recentMeetings: [] }),
-  healthCheck: vi.fn().mockResolvedValue({ status: 'ok' }),
+  createMeeting:        vi.fn().mockResolvedValue({ id: 'new-1', status: 'pending' }),
+  analyzeWithServer:    vi.fn().mockResolvedValue('# Analysis\nFull report'),
+  saveMeetingResult:    vi.fn().mockResolvedValue({ success: true }),
+  updateMeetingStatus:  vi.fn().mockResolvedValue({ success: true }),
+  deleteMeeting:        vi.fn().mockResolvedValue({ success: true }),
+  getDashboardStats:    vi.fn().mockResolvedValue({ total: 5, completed: 3, processing: 1, totalDuration: 120, recentMeetings: [] }),
+  healthCheck:          vi.fn().mockResolvedValue({ status: 'ok' }),
 }));
 
 // ---- Mock geminiService ----
