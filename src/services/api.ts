@@ -97,11 +97,14 @@ export async function analyzeWithServer(
   model: string | null,
   onProgress?: (stage: string, detail?: string) => void,
 ): Promise<string> {
-  // 10-minute timeout covers the ENTIRE operation (connection + streaming).
-  // The AbortController signal is kept active until we are done reading the
-  // body so that a hung Gemini response is properly cancelled.
+  // 25-minute timeout covers the ENTIRE operation (connection + streaming).
+  // Sized for the worst-case: a 90-minute recording with many screenshots can
+  // take up to 20+ minutes (File API upload ~2 min + ACTIVE polling up to 6 min
+  // + generateContent ~10-15 min). The AbortController signal stays active until
+  // we finish reading the body so that a genuinely hung Gemini response is
+  // properly cancelled without cutting off legitimate long-running analyses.
   const controller = new AbortController();
-  const timeoutId  = setTimeout(() => controller.abort(), 10 * 60 * 1000);
+  const timeoutId  = setTimeout(() => controller.abort(), 25 * 60 * 1000);
 
   try {
     const response = await fetch(`${API_BASE}/meetings/${meetingId}/analyze`, {

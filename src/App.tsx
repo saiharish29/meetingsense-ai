@@ -94,7 +94,7 @@ function App() {
       setAnalysisState({ status: 'success', result, meetingId: id });
     } catch (error: any) {
       const errMsg = error.name === 'AbortError'
-        ? 'Analysis timed out after 10 minutes. The recording may be too large or Gemini is temporarily unavailable. Please try again.'
+        ? 'Analysis timed out after 25 minutes. The recording may be too large or Gemini is temporarily unavailable. Please try again.'
         : (error.message || 'Something went wrong during processing.');
 
       // Best-effort: mark the meeting as errored in the DB so it doesn't stay
