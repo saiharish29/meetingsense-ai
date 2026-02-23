@@ -10,7 +10,9 @@
     "build": "vite build",
     "start": "node server/index.js",
     "preview": "vite preview",
-    "db:reset": "rm -f server/db/meetingsense.db && echo 'Database reset complete'"
+    "db:reset": "rm -f server/db/meetingsense.db && echo 'Database reset complete'",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@google/genai": "^1.30.0",
