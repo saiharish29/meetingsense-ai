@@ -8,7 +8,7 @@ import { ProcessingState } from './components/ProcessingState';
 import { MeetingHistory } from './components/MeetingHistory';
 import { MeetingDetailView } from './components/MeetingDetailView';
 import { setSelectedModel } from './services/geminiService';
-import { createMeeting, analyzeWithServer, checkApiKeyStatus, getModelPreference } from './services/api';
+import { createMeeting, analyzeWithServer, checkApiKeyStatus, getModelPreference, updateMeetingStatus } from './services/api';
 import { AnalysisState } from './types';
 
 type View = 'dashboard' | 'new' | 'history' | 'detail' | 'settings';
@@ -93,15 +93,15 @@ function App() {
       // 3. Result is already persisted by the server — just show it
       setAnalysisState({ status: 'success', result, meetingId: id });
     } catch (error: any) {
-      const errMsg = error.message || 'Something went wrong during processing.';
+      const errMsg = error.name === 'AbortError'
+        ? 'Analysis timed out after 10 minutes. The recording may be too large or Gemini is temporarily unavailable. Please try again.'
+        : (error.message || 'Something went wrong during processing.');
 
-      if (error.name === 'AbortError') {
-        setAnalysisState({
-          status: 'error',
-          error: 'Analysis timed out after 10 minutes. The recording may be too large or Gemini is temporarily unavailable. Please try again.',
-          meetingId: meetingId ?? undefined,
-        });
-        return;
+      // Best-effort: mark the meeting as errored in the DB so it doesn't stay
+      // stuck in "processing" indefinitely if the server crashed or lost the
+      // connection before it could update the status itself.
+      if (meetingId) {
+        updateMeetingStatus(meetingId, 'error', errMsg).catch(() => {});
       }
 
       setAnalysisState({ status: 'error', error: errMsg, meetingId: meetingId ?? undefined });
