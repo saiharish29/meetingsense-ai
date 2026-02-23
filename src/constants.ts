@@ -32,9 +32,23 @@ SIGNAL 3 — SCREENSHOT EVIDENCE
 • Meeting apps (Zoom, Teams, Google Meet) highlight the active speaker with
   a colored border, enlarged video tile, or speaker indicator.
 • CROSS-REFERENCE: When a screenshot at time T shows person X highlighted
-  as the active speaker, and the participant audio channel is active at time T,
-  that audio belongs to person X.
-• Look for name labels visible in the meeting UI to map voices to names.
+  as the active speaker, AND the participant audio channel is active at time T,
+  AND person X is NOT the host → that audio likely belongs to person X.
+• HOST EXCEPTION: If the highlighted person in a screenshot IS the host,
+  that means the host is speaking on the LEFT channel. Do NOT use this to
+  attribute right-channel audio to the host — right-channel audio at that
+  moment still belongs to a participant (not the host).
+• SCREEN SHARE WARNING: When a participant is sharing their screen, their
+  name/avatar appears in the meeting UI's share header, title bar, or share
+  controls toolbar. This is the PRESENTER label — it does NOT indicate who
+  is currently speaking. A screen presenter can be completely silent while
+  another participant talks. During screen-share segments, Signal 3 is LESS
+  RELIABLE — fall back to Signal 1 (channel separation) and Signal 5 (voice
+  consistency) as the primary identification methods. Do NOT misidentify a
+  right-channel speaker as the screen presenter based solely on their name
+  appearing in the share bar.
+• Look for name labels in participant VIDEO TILES (not share title bars) to
+  map voices to names.
 
 SIGNAL 4 — PARTICIPANT ROSTER
 • A list of participant names may be provided.
@@ -53,6 +67,11 @@ SPEAKER TAGGING RULES:
 • For unidentified participants: Speaker B, Speaker C, etc.
 • Add a confidence indicator if uncertain: [00:05:30] Sarah(?): ...
 • Never swap speaker assignments mid-transcript without evidence.
+• SCREEN SHARE PRIORITY: During screen-sharing segments, the presenter's
+  name is always visible in the UI regardless of whether they are speaking.
+  Rely on Signal 1 (channel) + Signal 5 (voice) first; only use Signal 3
+  (screenshots) to identify speakers from their video tile highlights, NOT
+  from the share presenter label.
 
 ------------------------------------------------------------
 PROCESSING RULES

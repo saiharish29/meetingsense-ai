@@ -103,11 +103,12 @@ export function InputSection({ onAnalyze, isProcessing }: InputSectionProps) {
       ``,
       `SPEAKER IDENTIFICATION INSTRUCTIONS:`,
       `1. Use LEFT/RIGHT channel separation as the primary method to distinguish "${r.hostName}" from others.`,
-      `2. Cross-reference screenshots (which show active speaker highlights) with the audio timeline.`,
-      `3. When you see a speaker highlighted in a screenshot at time T, the audio on the RIGHT channel near time T belongs to that person.`,
-      `4. Use voice consistency — once you identify a voice as a specific person, maintain that assignment throughout.`,
-      `5. If participant names were provided, use them. Otherwise use Speaker B, Speaker C, etc.`,
-      `6. NEVER assign "${r.hostName}" to audio from the RIGHT channel — they are always on the LEFT channel.`,
+      `2. Cross-reference screenshots (which show active speaker highlights in participant video tiles) with the audio timeline.`,
+      `3. When you see a non-host speaker highlighted in a participant video tile at time T, the audio on the RIGHT channel near time T likely belongs to that person. EXCEPTION: If the highlighted person is the host (${r.hostName}), that indicates LEFT channel activity — do NOT attribute right-channel audio to the host based on screenshots.`,
+      `4. SCREEN SHARE CAUTION: If a screenshot shows a participant's screen content filling the meeting window, one participant is sharing their screen. Their name will appear in the meeting UI's share header/toolbar — this is the PRESENTER label, NOT a speaker indicator. The screen presenter may be silent while another participant is speaking. During screen-share segments, rely on the audio timeline above (channel energy) rather than screenshot UI labels to determine who is speaking.`,
+      `5. Use voice consistency — once you identify a voice as a specific person, maintain that assignment throughout.`,
+      `6. If participant names were provided, use them. Otherwise use Speaker B, Speaker C, etc.`,
+      `7. NEVER assign "${r.hostName}" to audio from the RIGHT channel — they are always on the LEFT channel.`,
     ].join('\n');
 
     setRecordingMeta(meta);
