@@ -163,12 +163,13 @@ Every analysis includes a transparency section showing how each speaker was iden
 
 Previously, Gemini was called directly from the browser. This caused failures for long recordings because:
 
-- A 1.5-hour recording produces ~86 MB of audio — analysis takes 5–8 minutes
+- A 1.5-hour recording produces ~86 MB of audio — analysis takes 5–8+ minutes
 - Browser fetch requests time out long before Gemini finishes
 - No retry logic existed; failures were silent
 
 **Now, Node.js handles everything:**
-- No browser timeout — server waits as long as needed
+- Server-side processing with no internal timeout — runs until Gemini responds
+- 25-minute client safety valve covers even the largest supported recordings (see [Long Meeting Support](#️-long-meeting-support))
 - 3-attempt retry with exponential backoff on every API call
 - SSE keepalive every 25 seconds prevents proxy timeouts
 - Fallback strategy: if the full payload is too large, automatically reduces image count and retries
@@ -295,9 +296,11 @@ meetingsense-ai/
 │   ├── services/
 │   │   └── geminiAnalyzer.js        # ★ Server-side Gemini engine
 │   │                                #   (File API upload, retry, SSE events)
-│   └── routes/
-│       ├── meetings.js              # CRUD + POST /:id/analyze (SSE)
-│       └── settings.js              # API key + model management
+│   ├── routes/
+│   │   ├── meetings.js              # CRUD + POST /:id/analyze (SSE)
+│   │   └── settings.js              # API key + model management
+│   └── __tests__/
+│       └── sseHelpers.test.js       # Server SSE helper unit tests
 │
 ├── src/                             # React 19 + TypeScript frontend
 │   ├── App.tsx                      # Routing, analysis orchestration
@@ -315,13 +318,19 @@ meetingsense-ai/
 │   │   └── ResultView.tsx           # Tabbed analysis results
 │   ├── hooks/
 │   │   └── useMeetingRecorder.ts    # Dual-channel recording (mic + system audio)
-│   └── services/
-│       ├── api.ts                   # REST + SSE client (analyzeWithServer)
-│       └── geminiService.ts         # Thin delegate to backend
+│   ├── services/
+│   │   ├── api.ts                   # REST + SSE client (analyzeWithServer)
+│   │   └── geminiService.ts         # Thin delegate to backend
+│   └── __tests__/
+│       ├── setup.ts                 # Vitest setup (jest-dom matchers)
+│       ├── analyzeWithServer.test.ts # API client regression + unit tests
+│       ├── AppTimeoutError.test.tsx  # App error-handling regression tests
+│       └── InputSection.test.tsx    # InputSection component tests
 │
 ├── uploads/                         # Stored recordings & images (git-ignored)
 ├── index.html
 ├── vite.config.ts                   # Dev proxy: /api → :3001
+├── vitest.config.ts                 # Test runner configuration
 ├── tsconfig.json
 ├── package.json
 └── .env.local                       # Optional env overrides (git-ignored)
@@ -438,6 +447,39 @@ Each step also has **3 retry attempts** with exponential backoff for transient n
 
 **Progress bar stuck / no updates**
 → The SSE connection may have been dropped by a proxy. Refresh the page — the meeting record is preserved in the database and the analysis may have completed.
+
+**Error: `ENOENT: no such file or directory, stat '...dist/index.html'`**
+→ You ran `npm start` (production mode) without building the frontend first. The `dist/` folder does not exist until you compile it.
+- **Development** (recommended): use `npm run dev` — no build step needed, hot reload included.
+- **Production**: run `npm run build` first to compile the frontend, then `npm start`.
+
+**Analysis timed out after 25 minutes**
+→ This is the client-side safety timeout. It should only trigger for extremely large recordings (>90 min) combined with slow Gemini API response times. Try again — transient Gemini slowness usually resolves on a second attempt. If it fails repeatedly, check your network connection and the [Gemini API status page](https://status.cloud.google.com/).
+
+---
+
+## 🧪 Testing
+
+The test suite covers unit, regression, and integration tests for both frontend and backend.
+
+### Run tests
+
+```bash
+# Run all tests once (CI mode)
+npm test
+
+# Watch mode — re-runs on file changes (development)
+npm run test:watch
+```
+
+### Test coverage
+
+| Test file | Environment | What it covers |
+|-----------|-------------|----------------|
+| `src/__tests__/analyzeWithServer.test.ts` | jsdom | API client timeout fires at exactly 25 min (not 10, not earlier); SSE stream parsing; error propagation; `clearTimeout` called in both success and failure paths |
+| `src/__tests__/AppTimeoutError.test.tsx` | jsdom | App shows "25 minutes" on timeout; never shows "10 minutes"; `updateMeetingStatus('error')` called on any analysis failure; Try Again returns to input state; Back to Dashboard navigates home |
+| `src/__tests__/InputSection.test.tsx` | jsdom | All three input modes (Live Record, Upload, Paste Text); recording state machine; participant roster; Analyze button enable/disable rules |
+| `server/__tests__/sseHelpers.test.js` | node | SSE `send()` swallows write errors so they cannot revert a committed `'completed'` DB record; `clientGone` flag; keepalive; `finalEnd()` safety |
 
 ---
 
