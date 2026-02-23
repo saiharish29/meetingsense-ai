@@ -151,15 +151,31 @@ router.post('/:id/analyze', async (req, res) => {
   res.setHeader('X-Accel-Buffering', 'no'); // disable nginx buffering
   res.flushHeaders();
 
+  // Track whether the client has disconnected. Used to decide whether a write
+  // error in the catch block was caused by a legitimate analysis failure or
+  // merely by the client closing the SSE connection.
+  let clientGone = false;
+  req.on('close', () => { clientGone = true; });
+
+  // send() must NEVER throw — a client disconnect causes res.write() to reject
+  // with ECONNRESET/EPIPE, and if that propagates out of the try block it would
+  // run the catch block and wrongly revert a just-saved 'completed' record to
+  // 'error'. Swallowing the write error here is intentional and safe: the DB
+  // has already been updated before send() is called for the done event.
   const send = (data) => {
-    if (!res.writableEnded) {
+    if (res.writableEnded || clientGone) return;
+    try {
       res.write(`data: ${JSON.stringify(data)}\n\n`);
+    } catch (_) {
+      clientGone = true; // mark so further writes are skipped
     }
   };
 
-  // Keepalive comment line every 25 s to prevent proxy / browser timeouts
+  // Keepalive comment line every 25 s to prevent proxy / browser timeouts.
+  // Also wrapped in try/catch for the same reason as send() above.
   const keepalive = setInterval(() => {
-    if (!res.writableEnded) res.write(': keepalive\n\n');
+    if (res.writableEnded || clientGone) return;
+    try { res.write(': keepalive\n\n'); } catch (_) { clientGone = true; }
   }, 25_000);
 
   const cleanup = () => clearInterval(keepalive);
@@ -243,7 +259,9 @@ router.post('/:id/analyze', async (req, res) => {
     send({ stage: 'Error', error: err.message, done: true });
   } finally {
     cleanup();
-    if (!res.writableEnded) res.end();
+    if (!res.writableEnded) {
+      try { res.end(); } catch (_) {}
+    }
   }
 });
 
