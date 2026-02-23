@@ -97,47 +97,51 @@ export async function analyzeWithServer(
   model: string | null,
   onProgress?: (stage: string, detail?: string) => void,
 ): Promise<string> {
-  // 10-minute timeout — 1.5 h recording analysis can take 5–8 minutes
+  // 10-minute timeout covers the ENTIRE operation (connection + streaming).
+  // The AbortController signal is kept active until we are done reading the
+  // body so that a hung Gemini response is properly cancelled.
   const controller = new AbortController();
   const timeoutId  = setTimeout(() => controller.abort(), 10 * 60 * 1000);
 
-  let response: Response;
   try {
-    response = await fetch(`${API_BASE}/meetings/${meetingId}/analyze`, {
+    const response = await fetch(`${API_BASE}/meetings/${meetingId}/analyze`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ model: model || undefined }),
       signal:  controller.signal,
     });
-  } finally {
-    clearTimeout(timeoutId);
-  }
 
-  // Non-SSE errors (404, 400, etc.) before the stream opened
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({ error: 'Analysis failed' }));
-    throw new Error(err.error || `HTTP ${response.status}`);
-  }
+    // Non-SSE errors (404, 400, etc.) before the stream opened
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ error: 'Analysis failed' }));
+      throw new Error(err.error || `HTTP ${response.status}`);
+    }
 
-  // Read the SSE stream
-  const reader  = response.body!.getReader();
-  const decoder = new TextDecoder();
-  let buffer    = '';
+    // Read the SSE stream
+    const reader  = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer    = '';
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
+      buffer += decoder.decode(value, { stream: true });
 
-    // SSE lines are separated by \n\n; process complete lines
-    const lines  = buffer.split('\n');
-    buffer       = lines.pop() ?? ''; // keep potentially incomplete last line
+      // SSE lines are separated by \n\n; process complete lines
+      const lines  = buffer.split('\n');
+      buffer       = lines.pop() ?? ''; // keep potentially incomplete last line
 
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue; // SSE comment or empty line
-      try {
-        const event = JSON.parse(line.slice(6));
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue; // SSE comment or empty line
+
+        // Parse JSON separately so real event errors are never swallowed
+        let event: any;
+        try {
+          event = JSON.parse(line.slice(6));
+        } catch {
+          continue; // malformed data line — skip
+        }
 
         if (event.done) {
           if (event.error) throw new Error(event.error);
@@ -146,14 +150,13 @@ export async function analyzeWithServer(
         }
 
         onProgress?.(event.stage ?? '', event.detail);
-      } catch (parseErr: any) {
-        // Re-throw real errors; ignore JSON parse failures on non-data lines
-        if (parseErr.message && !parseErr.message.includes('JSON')) throw parseErr;
       }
     }
-  }
 
-  throw new Error('Analysis stream ended unexpectedly without a result.');
+    throw new Error('Analysis stream ended unexpectedly without a result.');
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 export async function saveMeetingResult(id: string, data: {

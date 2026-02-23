@@ -14,7 +14,33 @@ export function MeetingDetailView({ meetingId, onBack }: Props) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    getMeeting(meetingId).then(setMeeting).catch(console.error).finally(() => setLoading(false));
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+    getMeeting(meetingId)
+      .then((data) => {
+        setMeeting(data);
+        // Poll every 5 s while the server is still processing so the view
+        // auto-updates when analysis completes (or errors out).
+        if (data?.status === 'processing') {
+          pollTimer = setInterval(() => {
+            getMeeting(meetingId)
+              .then((updated) => {
+                setMeeting(updated);
+                if (updated?.status !== 'processing' && pollTimer) {
+                  clearInterval(pollTimer);
+                  pollTimer = null;
+                }
+              })
+              .catch(console.error);
+          }, 5_000);
+        }
+      })
+      .catch(console.error)
+      .finally(() => setLoading(false));
+
+    return () => {
+      if (pollTimer) clearInterval(pollTimer);
+    };
   }, [meetingId]);
 
   if (loading) return <div className="flex items-center justify-center h-full"><div className="w-8 h-8 border-3 border-brand-500 border-t-transparent rounded-full animate-spin" /></div>;
